@@ -1,0 +1,295 @@
+---
+title: "Rush lyrics"
+author: "Amy Gill"
+date: "February 2, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(spotifyr)
+library(tidyverse)
+library(GGally)
+library(tidytext)
+library(corrplot)
+library(lubridate)
+```
+
+## List studio albums
+
+I list the 19 Rush studio albums to be used in this study, matching Spotify album names.
+
+```{r}
+studio_albums = c("Rush", "Fly By Night", "Caress Of Steel", "2112", "A Farewell To Kings", "Hemispheres", "Permanent Waves", "Moving Pictures", "Signals", "Grace Under Pressure", "Power Windows", "Hold Your Fire", "Presto", "Roll The Bones", "Counterparts", "Test For Echo", "Vapor Trails", "Snakes & Arrows", "Clockwork Angels")
+```
+
+## Download audio features
+
+```{r echo=FALSE, message=FALSE}
+creds <- read_csv("spotifyr.csv")
+Sys.setenv(SPOTIFY_CLIENT_ID = creds$clientId)
+Sys.setenv(SPOTIFY_CLIENT_SECRET = creds$clientSecret)
+Sys.setenv(genius_token = creds$geniusToken)
+rm(creds)
+```
+
+
+`get_artist_audio_features` gets musical features, album metadata and popularity for an artist's entire discography.
+
+I download the audio features of the Rush discography and filter to keep only tracks from the studio albums. THen, I select columns that represent album metadata, musical characteristics, and the Spotify track popularity rating. I encode several character variables as factors to facilitate analysis.
+```{r}
+audioFeatures <- get_artist_audio_features("Rush") %>%
+  filter(album_name %in% studio_albums) %>%
+  mutate(album_name = factor(album_name, levels = studio_albums),
+         album_release_year = year(album_release_year),
+         album_number = as.integer(album_name),
+         time_signature = factor(time_signature),
+         key_mode = factor(key_mode),
+         key = factor(key),
+         mode = factor(mode)) %>%
+    select(track_name, album_name, album_release_year, album_number, track_popularity, duration_ms, key, mode, key_mode, time_signature, tempo, energy, valence, loudness, danceability)
+
+audioFeatures
+```
+
+I make some point edits to remove duplicate tracks and ensure track names correspond song titles on Genius. Genius track names are the official track names for this study.
+
+```{r}
+audioFeatures[audioFeatures$track_name == "Lakeside Park - Live", ]$track_name <- "Lakeside Park"
+
+audioFeatures[audioFeatures$track_name == "Seven Cities Of Gold - 1", ]$track_name <- "Seven Cities of Gold"
+
+audioFeatures[audioFeatures$track_name == "Face UP", ]$track_name <- "Face Up"
+
+audioFeatures$track_name <- str_replace(audioFeatures$track_name, " - Remastered", "")
+
+audioFeatures[audioFeatures$track_name == "Between Sun & Moon", ]$track_name <- "Between Sun And Moon"
+
+audioFeatures[audioFeatures$track_name == "Armor & Sword", ]$track_name <- "Armor and Sword"
+
+audioFeatures <- audioFeatures[-which(str_detect(audioFeatures$track_name, "- Live")),]
+
+```
+
+```{r}
+save(audioFeatures, file = "audioFeatures.RData")
+```
+
+
+## Audio Variables
+
+### Correlation matrix
+
+```{r}
+audioFeatures %>%
+  select(-track_name, -album_name, -album_number, -key, -mode, -key_mode, -time_signature) %>%
+  cor(method = "spearman") %>%
+  corrplot()
+```
+
+```{r}
+audioFeatures %>%
+  select(-track_name, -album_name, -album_number, -key, -mode, -key_mode, -time_signature) %>%
+  cor() %>%
+  corrplot()
+```
+
+
+### Energy
+
+Energy is a metric of musical intensity on a scale from 0 to 1. High energy represents perceived loudness, entropy, pace and onset, and dynamic range.
+
+#### Track energy distribution
+
+```{r}
+audioFeatures %>%
+  ggplot(aes(energy)) +
+  geom_histogram(bins = 10)
+```
+
+
+#### Track energy ranks
+
+The 10 most energetic songs: 
+
+```{r}
+audioFeatures %>%
+  arrange(desc(energy)) %>%
+  select(track_name, energy)
+```
+
+The 10 least energetic songs:
+
+```{r}
+audioFeatures %>%
+  arrange(energy) %>%
+  select(track_name, energy)
+```
+
+
+
+#### Energy by album
+
+```{r}
+audioFeatures %>%
+  ggplot(aes(album_name, energy)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Track energy by album") +
+  xlab("Album name") +
+  ylab("Energy")
+```
+
+#### Energy by year
+
+```{r}
+audioFeatures %>%
+  ggplot(aes(album_release_year, energy)) +
+  geom_point() +
+  geom_smooth(span = 0.2) +
+  ggtitle("Track energy by release year") +
+  xlab("Track year") +
+  ylab("Energy")
+```
+
+There is a slight correlation between energy and increasing track release year.
+
+```{r}
+cor(audioFeatures$energy, audioFeatures$album_release_year)
+```
+
+
+
+### Valence
+
+#### Track valence distribution
+
+```{r}
+audioFeatures %>%
+  ggplot(aes(valence)) +
+  geom_histogram(bins = 10)
+```
+
+
+#### Track valence ranks
+
+The 10 highest valence songs: 
+
+```{r}
+audioFeatures %>%
+  arrange(desc(valence)) %>%
+  select(track_name, valence)
+```
+
+The 10 lowest valence songs: 
+
+```{r}
+audioFeatures %>%
+  arrange(valence) %>%
+  select(track_name, valence)
+```
+
+#### Valence by album
+
+Different albums have different distributions of valence. The lowest valence albums
+
+```{r}
+audioFeatures %>%
+  ggplot(aes(album_name, valence)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Track valence by album") +
+  xlab("Album name") +
+  ylab("Valence")
+```
+
+#### Valence by year
+
+Starting at their first album in 1974, valence tends to decrease until 1977-78. Then, valence increases until a peak of 1982-84, followed by an immediate 2-album trough 1985-87. Valence peaks again in 1989, then slowly decreases over the remaining studio albums.
+
+```{r}
+audioFeatures %>%
+  ggplot(aes(album_release_year, valence)) +
+  geom_point() +
+  geom_smooth(span = 0.2) +
+  ggtitle("Track valence by release year") +
+  xlab("Track year") +
+  ylab("Valence")
+```
+
+#### Interpretation of valence
+
+Track valence is a measure of musical positiveness on a scale from 0 to 1. According to Spotify, high valence tracks tend to sound more cheerful and euphoric while low valence tracks sound more depressed and angry. Valence could correlate with lyrical sentiment. One might expect songs with positive lyrics to have a positive musical quality.
+
+However, I notice at least one outlier: the profoundly sad song "The Pass" is about a suicidal child, but it has a relatively high valence of 0.774.
+
+```{r}
+audioFeatures %>%
+  filter(track_name == "The Pass")
+```
+
+This discrepancy will be considered during lyrical analysis.
+
+#### Valence and energy
+
+Energy describes pace and intensity while valence describes positivity. Together they reflect more complex concepts. For example, songs with low valence could reflect either an angry or sad sound. Tracks with low valence but high energy more likely reflect anger, while low valence and low energy more likely reflect sadness. Let's consider the interaction between valence and energy.
+
+```{r}
+
+```
+
+```{r}
+audioFeatures %>%
+  ggplot(aes(valence, energy)) +
+  geom_point()
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+audioFeatures %>%
+  ggplot(aes(album_name, loudness)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+audioFeatures %>%
+  arrange(desc(valence)) %>%
+  select(track_name, valence, album_release_year)
+```
+
+```{r}
+cor(audioFeatures$valence, audioFeatures$album_release_year)
+```
+
+
+
+
+## Download lyric features
+
+
+
+
+
+
+
+
+
+
+
+#### Questions to address later
+
+* how does lyrical sentiment correlate with musical features?

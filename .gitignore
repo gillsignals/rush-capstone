@@ -1,3 +1,11 @@
+## R project file
+.Rproj
+
+## spotify
+spotifyr.csv
+
+## R preset ignores
+
 # History files
 .Rhistory
 .Rapp.history
@@ -34,3 +42,4 @@ vignettes/*.pdf
 
 # Shiny token, see https://shiny.rstudio.com/articles/shinyapps.html
 rsconnect/
+.Rproj.user

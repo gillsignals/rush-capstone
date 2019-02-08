@@ -1,0 +1,625 @@
+---
+title: "lyrics"
+author: "Amy Gill"
+date: "February 4, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Rush lyrics import and preprocessing
+
+## notes
+
+* corpus is a collection of documents - in this case, the Rush corpus is Rush lyrics from their 19 studio albums acquired from Genius
+* corpus is treated as a data type by the `tm` package, so we will make an official Rush corpus
+* bag-of-words method treats all words as individual tokens and does not track their parts of speech (noun, verb, etc.) or their relation to other features in the sentence
+
+
+
+
+* Genius does NOT have the right number of repeats of lyrics per song. For example, the word "biology" is part of a song chorus repeated at least 3 times, but it is only present in the database once.
+
+* the corpus is from Genius. In general, Genius lyrics match the official Rush discography lyrics at **LINK HERE**
+
+## Manually import functions (to fix mystery errors)
+
+```{r}
+library(tidyverse)
+library(tidytext)
+library(rvest)
+library(stringr)
+library(readr)
+library(tidyr)
+library(purrr)
+library(ggthemes)
+library(tm)
+library(textclean)
+library(lexicon)
+```
+
+
+
+### `genius_url`
+
+
+```{r}
+#' Use Genius url to retrieve lyrics
+#'
+#' This function is used inside of the `genius_lyrics()` function. Given a url to a song on Genius, this function returns a tibble where each row is one line. Pair this function with `gen_song_url()` for easier access to song lyrics.
+#'
+#' @param url The url of song lyrics on Genius
+#' @param info Default \code{"title"}, returns the track title. Set to \code{"simple"} for only lyrics, \code{"artist"} for the lyrics and artist, \code{"features"} for song element and the artist of that element,  \code{"all"} to return artist, track, line, lyric, element, and element artist.
+#'
+#' @examples
+#' url <- gen_song_url(artist = "Kendrick Lamar", song = "HUMBLE")
+#' genius_url(url)
+#'
+#' genius_url("https://genius.com/Head-north-in-the-water-lyrics", info = "all")
+#'
+#' @export
+#' @import dplyr
+#' @importFrom rvest html_session html_node
+#' @importFrom tidyr spread fill separate replace_na
+#' @importFrom stringr str_detect str_extract
+#' @importFrom readr read_lines
+
+
+
+genius_url <- function(url, info = "title")  {
+  # create a new session for scraping lyrics
+  session <- html_session(url)
+
+  # Get Artist name
+  artist <- html_nodes(session, ".header_with_cover_art-primary_info-primary_artist") %>%
+    html_text() %>%
+    str_replace_all("\n", "") %>%
+    str_trim()
+
+  # Get Song title
+  song_title <- html_nodes(session, ".header_with_cover_art-primary_info-title") %>%
+    html_text() %>%
+    str_replace_all("\n", "") %>%
+    str_trim()
+
+  # scrape the lyrics
+  lyrics <- # read the text from the lyrics class
+    html_node(session, ".lyrics") %>%
+    # trim white space
+    html_text(trim = TRUE) %>%
+    # use named vector for cleaning purposes
+    str_replace_all(cleaning()) %>% {
+      # sometimes there is only one line in a song
+      # if vector length == one it will try to read the text as a filepath
+      # add blank text if it that long
+      if (length(.) == 1) {
+        . <- c(.,"")
+      }
+    } %>%
+    # read lines into a data frame
+    read_lines() %>%
+
+
+    # filter to only rows with content
+    .[str_detect(., "[[:alnum:]]")] %>%
+
+    # trim whitespace
+    str_trim() %>%
+
+    # Convert to tibble
+    tibble(artist = artist,
+           track_title = song_title,
+           lyric = .) %>%
+    mutate(line = row_number()) %>%
+    bind_rows(tibble(lyric = c("", "[]"))) %>%
+    mutate(type =
+             case_when(
+               str_detect(lyric, "\\[|\\]") ~ "meta",
+               TRUE ~ "lyric")) %>%
+    spread(key = type, value = lyric) %>%
+    filter(!is.na(line)) %>%
+    fill(meta) %>%
+
+    #remove producer info
+    #filter(!str_detect(lyric, "[Pp]roducer")) %>%
+
+    #remove brackets
+    mutate(meta = str_extract(meta, "[^\\[].*[^\\]]")) %>%
+
+    #make "element" and "artist" columns
+    # sections of a song are called an element. Artists are resopnsible for each element
+    separate(meta, into = c("element", "element_artist"), sep = ": ", fill = "right") %>%
+
+    #if song has no features
+    mutate(element_artist = replace_na(element_artist, artist[1])) %>%
+
+    # filter out NA's from spreading meta
+    # this will keep the meta if there are no following lyrics
+    # this is helpful to keep track of instrumentals
+    group_by(element) %>%
+
+    # if there is only one line (meaning only elemnt info) keep the NA, else drop
+    filter(if_else(is.na(lyric) & n() > 1, FALSE, TRUE)) %>%
+    ungroup() %>%
+
+    # create new line numbers incase they have been messed up
+    mutate(line = row_number())
+
+
+  switch(info,
+         simple = {return(select(lyrics, -artist, -track_title, -element, -element_artist))},
+         artist = {return(select(lyrics, -track_title, -element, -element_artist))},
+         title = {return(select(lyrics, -artist, -element, -element_artist))},
+         features = {return(select(lyrics, -artist, -track_title))},
+         all = return(lyrics)
+  )
+
+}
+```
+
+### `add_genius`
+```{r}
+#' Add lyrics to a data frame
+#'
+#' This function is to be used to build on a data frame with artist and album/track information. Ideal via the spotifyr package.
+#'
+#' @param data This is a dataframe with one column for the artist name, and the other column being either the track title or the album title.
+#' @param artist This is the column which has artist title information
+#' @param type_group This is the column that has either album titles or track titles.
+#' @param type This is a single value character string of either `"album"` or `"lyrics"`. This tells the function what kind of lyrics to pull. This needs to be in line with `type_group`
+#'
+#' @examples
+#' Example with 2 different artists and albums
+#' artist_albums <- tribble(
+#'  ~artist, ~album,
+#'  "J. Cole", "KOD",
+#'  "Sampha", "Process"
+#')
+#'
+#'
+#'artist_albums %>%
+#'  add_genius(artist, album)
+#'
+#'
+#' Example with 2 different artists and songs
+#' artist_songs <- tribble(
+#'  ~artist, ~track,
+#'  "J. Cole", "Motiv8",
+#'  "Andrew Bird", "Anonanimal"
+#' )
+
+#' artist_songs %>%
+#'  add_genius(artist, track, type = "lyrics")
+
+#'
+#' @export
+#' @import dplyr
+#'
+#'
+
+add_genius <- function(data, artist, type_group, type = "album") {
+    genius_funcs <- list(album = possible_album, lyrics = possible_lyrics)
+    artist <- enquo(artist)
+    type_group <- enquo(type_group)
+
+    data %>%
+        distinct(!!artist, !!type_group) %>%
+        mutate(lyrics = map2(!!artist, !!type_group,  genius_funcs[[type]])) %>%
+    inner_join(data) %>%
+      unnest() %>%
+      # nest(artist_uri, album_uri, .key = "uris") %>%
+      # nest(album_img, album_type, is_collaboration,
+      #      album_release_date, album_release_year, .key = "meta") %>%
+      as_tibble() %>%
+      return()
+}
+
+```
+
+
+### `prep_info`
+
+```{r}
+#' Prepares input strings for `gen_song_url()`
+#'
+#' Applies a number of regular expressions to prepare the input to match Genius url format
+#'
+#' @param input Either artist, song, or album, function input.
+#'
+#'
+#' @examples
+#' prep_info(artist)
+#'
+#' @export
+#' @importFrom stringr str_replace_all str_trim
+#' @import dplyr
+
+
+prep_info <- function(input) {
+  str_replace_all(input,
+                c("\\s*\\(Ft.[^\\)]+\\)" = "",
+                  "&" = "",
+                  #"-" = " ",
+                  #"\\+" = " ",
+                  "\\$" = " ",
+                  #"/" = " ",
+                  #":" = " ",
+                  #"'" = "",
+                  #"," = "",
+                  "é" = "e",
+                  "ö" = "o",
+                  "[[:punct:]]" = " ",
+                  "[[:blank:]]+" = " ")) %>%
+                  str_trim() #%>%
+                  # str_replace_all("[[:punct:]]", "")
+}
+```
+
+### `gen_album_url`
+
+```{r}
+#' Create Genius Album url
+#'
+#' Creates a string containing the url to an album tracklist on Genius.com. The function is used internally to `genius_tracklist()`.
+#'
+#' @param artist The quoted name of the artist. Spelling matters, capitalization does not.
+#' @param album The quoted name of the album Spelling matters, capitalization does not.
+#'
+#' @examples
+#'
+#' gen_album_url(artist = "Pinegrove", album = "Cardinal")
+#'
+#' @export
+#' @import dplyr
+#' @importFrom stringr str_replace_all
+
+gen_album_url <- function(artist = NULL, album = NULL) {
+  artist <- prep_info(artist)
+  album <-  prep_info(album)
+  base_url <- "https://genius.com/albums/"
+  query <- paste(artist,"/", album, sep = "") %>%
+    str_replace_all(" ", "-")
+
+  url <- paste0(base_url, query)
+  return(url)
+}
+```
+
+### `gen_song_url`
+
+```{r}
+#' Create Genius url
+#'
+#' Generates the url for a song given an artist and a song title. This function is used internally within the `genius_lyrics()` function.
+#'
+#' @param artist The quoted name of the artist. Spelling matters, capitalization does not.
+#' @param song The quoted name of the song. Spelling matters, capitalization does not.
+#'
+#' @examples
+#' gen_song_url(artist = "Kendrick Lamar", song = "HUMBLE")
+#' gen_song_url("Margaret glaspy", "Memory Street")
+#'
+#' @export
+#' @importFrom stringr str_replace_all
+#' @import dplyr
+#'
+gen_song_url <- function(artist = NULL, song = NULL) {
+  artist <- prep_info(artist)
+  song <- prep_info(song)
+  base_url <- "https://genius.com/"
+  query <- paste(artist, song, "lyrics", sep = "-") %>%
+    str_replace_all(" ", "-")
+  url <- paste0(base_url, query)
+  return(url)
+}
+```
+
+### `genius_album`
+
+```{r}
+#' Retrieve song lyrics for an album
+#'
+#' Obtain the lyrics to an album in a tidy format.
+#'
+#' @param artist The quoted name of the artist. Spelling matters, capitalization does not.
+#' @param album The quoted name of the album Spelling matters, capitalization does not.
+#' @param info Return extra information about each song. Default `"simple"` returns `title`, `track_n`, and `text`. Set `info = "artist"` for artist and track title. See args to `genius_lyrics()`.
+#'
+#' @examples
+#'
+#' genius_album(artist = "Petal", album = "Comfort EP")
+#' genius_album(artist = "Fit For A King", album = "Deathgrip")
+#'
+#' @export
+#' @import dplyr
+#' @importFrom purrr map
+#' @importFrom stringr str_replace_all
+#' @importFrom tidyr unnest
+
+genius_album <- function(artist = NULL, album = NULL, info = "simple") {
+
+  # Obtain tracklist from genius_tracklist
+  tracks <-  genius_tracklist(artist, album)
+
+  album <- tracks %>%
+
+    # Iterate over the url to the song title
+    mutate(lyrics = map(track_url, genius_url, info)) %>%
+
+    # Unnest the tibble with lyrics
+    unnest(lyrics) %>%
+    right_join(tracks) %>%
+    select(-track_url)
+
+
+
+  return(album)
+}
+```
+
+### `genius_lyrics`
+
+```{r}
+#' Retrieve song lyrics from Genius.com
+#'
+#' Retrieve the lyrics of a song with supplied artist and song name.
+#' @param artist The quoted name of the artist. Spelling matters, capitalization does not.
+#' @param song The quoted name of the song. Spelling matters, capitalization does not.
+#' @param info Default \code{"title"}, returns the track title. Set to \code{"simple"} for only lyrics, \code{"artist"} for the lyrics and artist, \code{"features"} for song element and the artist of that element,  \code{"all"} to return artist, track, line, lyric, element, and element artist.
+#'
+#'
+#' @examples
+#' genius_lyrics(artist = "Margaret Glaspy", song = "Memory Street")
+#' genius_lyrics(artist = "Kendrick Lamar", song = "Money Trees")
+#' genius_lyrics("JMSN", "Drinkin'")
+#'
+#' @export
+#' @import dplyr
+
+genius_lyrics <- function(artist = NULL, song = NULL, info = "title") {
+  song_url <- gen_song_url(artist, song)
+  lyrics <- genius_url(song_url, info)
+  return(lyrics)
+}
+```
+
+
+### `genius_tracklist`
+
+```{r}
+#' Create a tracklist of an album
+#'
+#' Creates a `tibble` containing all track titles for a given artist and album. This function is used internally in `genius_album()`.
+#'
+#' @param artist The quoted name of the artist. Spelling matters, capitalization does not.
+#' @param album The quoted name of the album Spelling matters, capitalization does not.
+#'
+#' @examples
+#'
+#' genius_tracklist(artist = "Andrew Bird", album = "Noble Beast")
+#'
+#' @export
+#' @import dplyr
+#' @importFrom rvest html_session html_nodes html_text html_attr
+#' @importFrom stringr str_replace_all str_trim
+
+genius_tracklist <- function(artist = NULL, album = NULL) {
+  url <- gen_album_url(artist, album)
+  session <- html_session(url)
+
+  # Get track numbers
+  # Where there are no track numbers, it isn't a song
+  track_numbers <- html_nodes(session, ".chart_row-number_container-number") %>%
+    html_text() %>%
+    str_replace_all("\n", "") %>%
+    str_trim()
+
+  # Get all titles
+  # Where there is a title and a track number, it isn't an actual song
+  track_titles <- html_nodes(session, ".chart_row-content-title") %>%
+    html_text() %>%
+    str_replace_all("\n","") %>%
+    str_replace_all("Lyrics", "") %>%
+    str_trim()
+
+  # Get all song urls
+  track_url <- html_nodes(session, ".u-display_block") %>%
+    html_attr('href') %>%
+    str_replace_all("\n", "") %>%
+    str_trim()
+
+  # Create df for easy filtering
+  # Filter to find only the actual tracks, the ones without a track number were credits / booklet etc
+  df <- tibble(
+    track_title = track_titles,
+    track_n = as.integer(track_numbers),
+    track_url = track_url
+  ) %>%
+    filter(track_n > 0)
+
+  return(df)
+}
+```
+
+### `cleaning`
+
+```{r}
+#' Function which produces a vector to be used in string cleaning from scraping there are a lot of hard coded values in here and will need to be adapted for the weird nuances.
+cleaning <- function() {
+    # putting randomblackdude in here because I can't figure out a regex for him and he's throwing me off
+    clean_vec <- c("([^RandomBlackDude][a-z0-9]{2,})([[:upper:]])" = "\\1\n\\2", # turn camel case into new lines
+    "(\\]|\\))([[:upper:]])" = "\\1\n\\2", # letters immediately after closing brackets new lines
+    # brackets with producer info into new lines
+    "(\\[.{2,100}\\])" ="\n\\1\n",
+    # rip smart quotes
+    "’" = "'",
+    # if quotes follow or precede brackets fix lines
+    "(\\])(\")" = "\\1\n\\2",
+    "(\")(\\[)" = "\\1\n\\2",
+    # if a question mark directly touches a word or number make new lines
+    "(\\?)([[:alpha:]])" = "\\1\n\\2",
+    # roger waters, you're a pain: comfortably numb, issue # 4
+    # https://github.com/JosiahParry/geniusR/issues/4
+    "(\\])(\\[)" = "\\1\n\\2")
+
+    return(clean_vec)
+}
+```
+
+### `possible_album` and `possible_lyrics`
+
+```{r}
+possible_album <- possibly(genius_album, otherwise = as_tibble())
+possible_lyrics <- possibly(genius_lyrics, otherwise = as_tibble())
+```
+
+
+## Importing Rush lyrics
+
+```{r}
+studio_albums <- c("Rush", "Fly By Night", "Caress Of Steel", "2112", "A Farewell To Kings", "Hemispheres", "Permanent Waves", "Moving Pictures", "Signals", "Grace Under Pressure", "Power Windows", "Hold Your Fire", "Presto", "Roll The Bones", "Counterparts", "Test For Echo", "Vapor Trails", "Snakes & Arrows", "Clockwork Angels")
+
+rushAlbums <- data.frame(artist = "Rush", album = studio_albums)
+```
+
+
+```{r}
+albumLyrics <- rushAlbums %>%
+  mutate(tracks = map2(artist, album, genius_album))
+
+head(albumLyrics)
+```
+
+
+```{r}
+lyrics <- albumLyrics %>%
+  unnest(tracks) %>%
+  select(-artist, -track_n, -line)
+  
+head(lyrics)
+```
+
+```{r}
+lyrics %>%
+  group_by(track_title) %>%
+  count()
+```
+
+
+
+`lyrics` contains 3 columns: `album`, `track_title`, and `lyric`. Lyrics are provided linewise, so there are multiple lines of lyrics per song. Instrumental track lyrics are represented as `NA`. Lyrics for a track can be obtained by grouping or filtering by track title. Lyrics for an album can be obtained by grouping or filtering for an album. 
+
+## Tokenization
+
+I convert words to tokens. I wait to perform factor conversions until after copy edits.
+
+```{r}
+tokens <- lyrics %>%
+  unnest_tokens(word, lyric)
+
+head(tokens)
+```
+
+## Standardizing spelling
+
+### Cygnus X-1
+
+```{r}
+tokens %>%
+  filter(word == "1six")
+```
+
+```{r}
+tokens %>%
+  filter(track_title == "Cygnus X-1 Book I: The Voyage")
+```
+
+```{r}
+tokens$word[tokens$word == "1six"] <- "six"
+cygOne <- c("A Farewell To Kings", "Cygnus X-1 Book I: The Voyage", "1")
+tokens <- rbind(tokens, cygOne)
+```
+
+### Replace numbers with words
+
+```{r}
+tokens <- tokens %>%
+  mutate(word = replace_number(word))
+```
+
+### Contractions
+
+Contractions are converted to their fully expanded form (e.g. "I'm" to "I am"). First, standard contractions in they key contraction table from the `lexicon` package were expanded, Then, nonstandard contractions and those missing from the key contraction table were expanded. Words ending with "`s" were trimmed to their roots for analysis with bag-of-words.
+
+```{r}
+tokens$word <- replace_contraction(tokens$word)
+
+tokens$word <- mgsub(tokens$word, c("who've", "where'd", "wond'rin'why", "livin'yes", "trav'lin", "mem'ries", "ev'ry", "trav'llers", "o'er", "light'my"), c("who have", "where did", "wondering why", "living yes", "traveling", "memories", "every", "travelers", "over", "light my"))
+
+```
+
+
+```{r}
+tokens$word <- str_remove(tokens$word, "'s")
+```
+
+The remaining words with apostrophes have the apostrophes as a key part of their spelling and do not need edits.
+
+### Omitted "-g" in "-ing"
+
+Early albums in the Rush corpus often omitted the ending "-g" in "-ing" words. The word set ending in "in" were inspected and words whose proper spelling is "-ing" were corrected throughout the corpus.
+
+```{r}
+gOmitted <- c("comin", "diggin", "feelin", "findin", "goin", "havin", "itchin", "laughin", "livin", "makin", "nothin", "rollin", "runnin", "smilin", "stoppin", "workin")
+
+gReplaced <- c("coming", "digging", "feeling", "finding", "going", "having", "itching", "laughing", "living", "making", "nothing", "rolling", "running", "smiling", "stopping", "working")
+
+tokens$word <- mgsub(tokens$word, gOmitted, gReplaced)
+```
+
+```{r}
+tokens %>%
+  count(word)
+```
+
+## Instrumentals - reintroducing NAs
+
+Three instrumentals are incorrectly given lyrics. These lyrics were removed and replaced with NA.
+Stem
+```{r}
+tokens <- tokens %>%
+  filter(track_title != "La Villa Strangiato (An Exercise in Self-Indulgence)") %>%
+  filter(track_title != "Limbo") %>%
+  filter(track_title != "YYZ")
+  
+  
+instrumentals <- data.frame(album = c("Hemispheres", "Moving Pictures", "Test Tor Echo"), track_title = c("La Villa Strangiato", "YYZ", "Limbo"), word = c(NA, NA, NA))
+
+tokens <- rbind(tokens, instrumentals)
+```
+
+## Stop words
+
+The Rush lyrics corpus contains 31,361 total words, of which 4,104 are unique. After removing stop words, there are 12,876 total words and 3701 unique words.
+
+```{r}
+tokens<- tokens %>%
+  anti_join(stop_words)
+```
+
+```{r}
+tokens %>%
+  count(word)
+```
+
+## Save as lyricTokens
+
+```{r}
+save(tokens, file = "lyricTokens.RData")
+```
+
+
+
+
