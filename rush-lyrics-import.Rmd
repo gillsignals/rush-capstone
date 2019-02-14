@@ -11,20 +11,19 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Rush lyrics import and preprocessing
 
-## notes
+The Rush lyrics corpus contains 31,361 total words, of which 4,104 are unique. After removing stop words, there are 11,937 total words and 3,655 unique words.
+
+## Notes
 
 * corpus is a collection of documents - in this case, the Rush corpus is Rush lyrics from their 19 studio albums acquired from Genius
 * corpus is treated as a data type by the `tm` package, so we will make an official Rush corpus
 * bag-of-words method treats all words as individual tokens and does not track their parts of speech (noun, verb, etc.) or their relation to other features in the sentence
 
-
-
-
 * Genius does NOT have the right number of repeats of lyrics per song. For example, the word "biology" is part of a song chorus repeated at least 3 times, but it is only present in the database once.
 
 * the corpus is from Genius. In general, Genius lyrics match the official Rush discography lyrics at **LINK HERE**
 
-## Manually import functions (to fix mystery errors)
+## Import libraries
 
 ```{r}
 library(tidyverse)
@@ -34,14 +33,13 @@ library(stringr)
 library(readr)
 library(tidyr)
 library(purrr)
-library(ggthemes)
 library(tm)
 library(textclean)
 library(lexicon)
+library(hunspell)
 ```
 
-
-
+## Manually import functions (to fix mystery errors)
 ### `genius_url`
 
 
@@ -65,6 +63,10 @@ library(lexicon)
 #' @importFrom tidyr spread fill separate replace_na
 #' @importFrom stringr str_detect str_extract
 #' @importFrom readr read_lines
+
+
+
+
 
 
 
@@ -478,14 +480,14 @@ possible_lyrics <- possibly(genius_lyrics, otherwise = as_tibble())
 
 ## Importing Rush lyrics
 
-```{r}
+```{r eval=FALSE}
 studio_albums <- c("Rush", "Fly By Night", "Caress Of Steel", "2112", "A Farewell To Kings", "Hemispheres", "Permanent Waves", "Moving Pictures", "Signals", "Grace Under Pressure", "Power Windows", "Hold Your Fire", "Presto", "Roll The Bones", "Counterparts", "Test For Echo", "Vapor Trails", "Snakes & Arrows", "Clockwork Angels")
 
 rushAlbums <- data.frame(artist = "Rush", album = studio_albums)
 ```
 
 
-```{r}
+```{r eval=FALSE}
 albumLyrics <- rushAlbums %>%
   mutate(tracks = map2(artist, album, genius_album))
 
@@ -493,23 +495,121 @@ head(albumLyrics)
 ```
 
 
-```{r}
+```{r eval=FALSE}
 lyrics <- albumLyrics %>%
   unnest(tracks) %>%
-  select(-artist, -track_n, -line)
+  select(-artist, -track_n, -line) %>%
+  filter(!is.na(lyric))
   
 head(lyrics)
 ```
 
-```{r}
+```{r eval=FALSE}
 lyrics %>%
   group_by(track_title) %>%
   count()
 ```
 
+## Remove incorrect lines from "Fly by Night" lyrics
 
+```{r eval=FALSE}
+lyrics <- lyrics %>%
+  filter(!(lyric %in% c("Airport scurry flurry faces", "Parade of passers by", "People going many places", "With a smile or just a sigh", "Waiting waiting pass the time", "Another cigarette", "Get in line - gate thirty-nine", "The time is not here yet (end)")))
+```
+
+
+
+## Remove improperly processed chorus repeats
+
+Some tracks have lyrics provided in a format such that the chorus is only written out once and later chorus repeats are written as "x2", "x3", "x4". For this analysis, we remove lines of this format. 
+
+```{r}
+str_subset(lyrics$lyric, "x\\d+")
+```
+
+```{r}
+lyrics$lyric <- str_remove(lyrics$lyric, "x\\d+")
+
+lyrics <- filter(lyrics, lyric != "")
+```
+
+## Instrumentals - reintroducing NAs
+
+Three instrumentals are incorrectly given lyrics. These lyrics were removed and replaced with NA.
+
+```{r eval=FALSE}
+lyrics <- lyrics %>%
+  filter(track_title != "La Villa Strangiato (An Exercise in Self-Indulgence)") %>%
+  filter(track_title != "Limbo") %>%
+  filter(track_title != "YYZ")
+  
+instrumentals <- data.frame(album = c("Hemispheres", "Moving Pictures", "Test Tor Echo", "Roll The Bones", "Counterparts", "Snakes & Arrows", "Snakes & Arrows"), track_title = c("La Villa Strangiato", "YYZ", "Limbo", "Where's My Thing?", "Leave That Thing Alone", "Hope", "The Main Monkey Business"), lyric = c(NA, NA, NA, NA, NA, NA, NA))
+
+lyrics <- rbind(lyrics, instrumentals)
+```
 
 `lyrics` contains 3 columns: `album`, `track_title`, and `lyric`. Lyrics are provided linewise, so there are multiple lines of lyrics per song. Instrumental track lyrics are represented as `NA`. Lyrics for a track can be obtained by grouping or filtering by track title. Lyrics for an album can be obtained by grouping or filtering for an album. 
+
+
+
+
+
+
+
+
+```{r}
+lyricStringCollapse <- function(songTitle) {
+  lyrics %>%
+    filter(track_title == songTitle) %>%
+    .$lyric %>%
+    paste(sep = "\n", collapse = "\n")
+}
+
+lyricStrings <- unlist(map(unique(lyrics$track_title), lyricStringCollapse))
+
+lyrics <- data.frame(track = unique(lyrics$track_title), lyrics = lyricStrings)
+
+head(lyricsPerSong)
+```
+
+## Save raw lyrics for full 165 song dataset
+
+```{r}
+save(lyrics, file="rawLyrics.RData")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ## Tokenization
 
@@ -522,87 +622,8 @@ tokens <- lyrics %>%
 head(tokens)
 ```
 
-## Standardizing spelling
-
-### Cygnus X-1
-
-```{r}
-tokens %>%
-  filter(word == "1six")
-```
-
-```{r}
-tokens %>%
-  filter(track_title == "Cygnus X-1 Book I: The Voyage")
-```
-
-```{r}
-tokens$word[tokens$word == "1six"] <- "six"
-cygOne <- c("A Farewell To Kings", "Cygnus X-1 Book I: The Voyage", "1")
-tokens <- rbind(tokens, cygOne)
-```
-
-### Replace numbers with words
-
-```{r}
-tokens <- tokens %>%
-  mutate(word = replace_number(word))
-```
-
-### Contractions
-
-Contractions are converted to their fully expanded form (e.g. "I'm" to "I am"). First, standard contractions in they key contraction table from the `lexicon` package were expanded, Then, nonstandard contractions and those missing from the key contraction table were expanded. Words ending with "`s" were trimmed to their roots for analysis with bag-of-words.
-
-```{r}
-tokens$word <- replace_contraction(tokens$word)
-
-tokens$word <- mgsub(tokens$word, c("who've", "where'd", "wond'rin'why", "livin'yes", "trav'lin", "mem'ries", "ev'ry", "trav'llers", "o'er", "light'my"), c("who have", "where did", "wondering why", "living yes", "traveling", "memories", "every", "travelers", "over", "light my"))
-
-```
-
-
-```{r}
-tokens$word <- str_remove(tokens$word, "'s")
-```
-
-The remaining words with apostrophes have the apostrophes as a key part of their spelling and do not need edits.
-
-### Omitted "-g" in "-ing"
-
-Early albums in the Rush corpus often omitted the ending "-g" in "-ing" words. The word set ending in "in" were inspected and words whose proper spelling is "-ing" were corrected throughout the corpus.
-
-```{r}
-gOmitted <- c("comin", "diggin", "feelin", "findin", "goin", "havin", "itchin", "laughin", "livin", "makin", "nothin", "rollin", "runnin", "smilin", "stoppin", "workin")
-
-gReplaced <- c("coming", "digging", "feeling", "finding", "going", "having", "itching", "laughing", "living", "making", "nothing", "rolling", "running", "smiling", "stopping", "working")
-
-tokens$word <- mgsub(tokens$word, gOmitted, gReplaced)
-```
-
-```{r}
-tokens %>%
-  count(word)
-```
-
-## Instrumentals - reintroducing NAs
-
-Three instrumentals are incorrectly given lyrics. These lyrics were removed and replaced with NA.
-Stem
-```{r}
-tokens <- tokens %>%
-  filter(track_title != "La Villa Strangiato (An Exercise in Self-Indulgence)") %>%
-  filter(track_title != "Limbo") %>%
-  filter(track_title != "YYZ")
-  
-  
-instrumentals <- data.frame(album = c("Hemispheres", "Moving Pictures", "Test Tor Echo"), track_title = c("La Villa Strangiato", "YYZ", "Limbo"), word = c(NA, NA, NA))
-
-tokens <- rbind(tokens, instrumentals)
-```
 
 ## Stop words
-
-The Rush lyrics corpus contains 31,361 total words, of which 4,104 are unique. After removing stop words, there are 12,876 total words and 3701 unique words.
 
 ```{r}
 tokens<- tokens %>%
@@ -613,13 +634,5 @@ tokens<- tokens %>%
 tokens %>%
   count(word)
 ```
-
-## Save as lyricTokens
-
-```{r}
-save(tokens, file = "lyricTokens.RData")
-```
-
-
 
 

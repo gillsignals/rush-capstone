@@ -1,0 +1,132 @@
+---
+title: "Rush lyrics standardization"
+author: "Amy Gill"
+date: "February 13, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+
+```{r}
+library(pluralize)
+library(stringr)
+library(tidyverse)
+library(textclean)
+library(tm)
+library(hunspell)
+```
+
+
+## Lyrics standardization with string edits
+
+For some analyses like sentiment analysis, it is important that words match a common dictionary format so that word properties can be accurately mapped. I generate a standardized lyric set separate from the raw lyrics, as features like nonstandard word spelling and spelling errors could be predictive of track album or era. As the goal of this project is to predict track album or era from lyrics alone, the raw lyrics will be used for predictive modeling, while the standardized lyrics will be used for exploratory sentiment analysis.
+
+```{r}
+load("rawLyrics.Rdata") # loads `lyrics`
+```
+
+
+### Removing possessive "'s"
+
+The "'s" generally does not add information and can contribute to spelling differences. I strip "'s" from all strings.
+
+```{r}
+```
+
+
+### Replace contractions
+
+Contractions are converted to their fully expanded form (e.g. "I'm" to "I am"). First, standard contractions in they key contraction table from the `lexicon` package were expanded. Words ending with "`s" were trimmed to their roots for analysis with bag-of-words. Then, nonstandard contractions and those missing from the key contraction table were expanded during incorrect word analysis. 
+
+```{r}
+lyrics$lyrics <- replace_contraction(lyrics$lyrics)
+lyrics$lyrics <- str_remove_all(lyrics$lyrics, "'s")
+
+head(lyrics)
+```
+
+
+### Inspect incorrect words
+
+There are 103 incorrectly spelled words according to the `hunspell` spell-checking package. I generate this vector of words, `incorrect`, to determine which spellings need to be corrected.
+
+```{r}
+incorrect = unique(unlist(hunspell(lyrics$lyrics)))
+
+incorrect
+```
+
+### Omitted "-g" in "-ing"
+
+Early albums in the Rush corpus often omitted the ending "-g" in "-ing" words. The word set ending in "in" were inspected and words whose proper spelling is "-ing" were corrected throughout the corpus.
+
+```{r}
+lyrics$lyrics <- str_replace_all(lyrics$lyrics, "in'", "ing")
+```
+
+I regenerate `incorrect` to see how many incorrect words remain.
+
+```{r}
+incorrect = unique(unlist(hunspell(lyrics$lyric)))
+
+incorrect
+```
+
+There are now 87 incorrect words remaining.
+
+### Fix incorrectly compressed words and odd abbreviations
+
+```{r}
+original <- c("wond'ringWhy", "livingYes", "DayThe", "light'My", "where'd", "Where'd", "aingt", "rollin ", "trav'ling", "mem'ries", "ev'ry", "trav'llers", "Seaspray", "DomeDecreed", "XanaduXanadu", "Theres", "1six")
+new <- c("wondering Why", "living yes", "Day the", "light My", "where did", "Where did", "ain't", "rolling ", "traveling", "memories", "every", "travelers", "Sea spray", "Dome Decreed", "Xanadu Xanadu", "There is", "One six")
+lyrics$lyrics <- mgsub(lyrics$lyrics, original, new)
+```
+
+I regenerate `incorrect` to see how many incorrect words remain.
+
+```{r}
+incorrect = unique(unlist(hunspell(lyrics$lyric)))
+
+incorrect
+```
+
+There are now 72 incorrect words remaining.
+
+### Standardizing spelling
+
+```{r}
+nonstandard <- c("yeaaah", "yeeah", "grey", "spectres", "Spectres", "Woah", "ploughmen", "Travelled", "Spiralled", "Ohhh", "Ohhhhh", "theatres", "vapours", "defences", "favourite", "Ahh", "ahh", "receeds", "muslim", "'43")
+standard <- c("yeah", "yeah", "gray", "specters", "Specters", "whoa", "plowmen", "Traveled", "Spiraled", "Oh", "Oh", "theaters", "vapors", "defenses", "favorites", "Ah", "ah", "recedes", "Muslim", "forty-three")
+lyrics$lyrics <- mgsub(lyrics$lyrics, nonstandard, standard)
+```
+
+I regenerate `incorrect` to evaluate remaining incorrect words.
+
+```{r}
+incorrect = unique(unlist(hunspell(lyrics$lyrics)))
+
+incorrect
+```
+
+The remining 53 words are correct spellings of nonstandard or French words. 
+
+### Replace numbers
+
+```{r}
+lyrics$lyrics <- replace_number(lyrics$lyrics)
+```
+
+```{r}
+filter(lyrics, track == "The Body Electric")$lyrics
+```
+
+### Save as stdLyrics
+
+```{r}
+save(lyrics, file="stdLyrics.RData")
+```
+

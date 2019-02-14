@@ -1,0 +1,59 @@
+---
+title: "Rush Dataset Title Reconciler"
+author: "Amy Gill"
+date: "February 13, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Title reconciliation
+
+This script converts titles in `audioFeatures.RData
+
+
+```{r}
+load("rawLyrics.RData")
+load("audioFeatures.RData")
+lyricTitles <- data.frame(track = lyricsPerSong$track)
+audioTitles <- data.frame(track = unique(audioFeatures$track_name))
+anti_join(audioTitles, lyricTitles)
+```
+
+```{r}
+audioFeatures$track_name[audioFeatures$track_name == "In The End"] <- "In the End"
+audioFeatures$track_name[audioFeatures$track_name == "By-Tor & The Snow Dog - At The Tobes Of Hades / Across The Styx / Of The Battle / Epilogue - Medley/Album Version"] <- "By-Tor and the Snow Dog"
+audioFeatures$track_name[audioFeatures$track_name == "Closer To The Heart"] <- "Closer to the Heart"
+audioFeatures$track_name[audioFeatures$track_name == "Fly By Night"] <- "Fly by Night"
+audioFeatures$track_name[audioFeatures$track_name == "Between The Wheels"] <- "Between the Wheels"
+audioFeatures$track_name[audioFeatures$track_name == "Cygnus X-1 Book II: Hemispheres"] <- "Cygnus X-1, Book II: Hemispheres"
+audioFeatures$track_name[audioFeatures$track_name == "Beneath, Between & Behind"] <- "Beneath, Between and Behind"
+audioFeatures$track_name[audioFeatures$track_name == "The Fountain Of Lamneth"] <- "The Fountain of Lamneth"
+audioFeatures$track_name[audioFeatures$track_name == "Cygnus X-1 - Book One - The Voyage"] <- "Cygnus X-1 Book I: The Voyage"
+audioFeatures$track_name[audioFeatures$track_name == "A Farewell To Kings"] <- "A Farewell to Kings"
+audioFeatures$track_name[audioFeatures$track_name == "2112: Overture / The Temples Of Syrinx / Discovery / Presentation / Oracle / Soliloquy / Grand Finale - Medley"] <- "2112"
+audioFeatures$track_name[audioFeatures$track_name == "Something For Nothing"] <- "Something for Nothing"
+audioFeatures$track_name[audioFeatures$track_name == "A Passage To Bangkok"] <- "A Passage to Bangkok"
+audioFeatures$track_name[audioFeatures$track_name == "Out Of The Cradle"] <- "Out of the Cradle"
+audioFeatures$track_name[audioFeatures$track_name == 'Freeze (Part IV Of "Fear")'] <- "Freeze"
+audioFeatures$track_name[audioFeatures$track_name == "Carve Away The Stone"] <- "Carve Away the Stone"
+audioFeatures$track_name[audioFeatures$track_name == "Time And Motion"] <- "Time and Motion"
+audioFeatures$track_name[audioFeatures$track_name == "The Color Of Right"] <- "The Colour of Right"
+audioFeatures$track_name[audioFeatures$track_name == "Half The World"] <- "Half the World"
+audioFeatures$track_name[audioFeatures$track_name == "Test For Echo"] <- "Test for Echo"
+audioFeatures$track_name[audioFeatures$track_name == "The Larger Bowl"] <- "The Larger Bowl (A Pantoum)"
+audioFeatures$track_name[audioFeatures$track_name == "Ghost Of A Chance"] <- "Ghost of a Chance"
+audioFeatures$track_name[audioFeatures$track_name == "Roll The Bones"] <- "Roll the Bones"
+audioFeatures$track_name[audioFeatures$track_name == "The Speed Of Love"] <- "The Speed of Love"
+audioFeatures$track_name[audioFeatures$track_name == "Between Sun And Moon"] <- "Between Sun and Moon"
+audioFeatures$track_name[audioFeatures$track_name == "Cut To The Chase"] <- "Cut to the Chase"
+audioFeatures$track_name[audioFeatures$track_name == "Vapor Trails"] <- "Vapor Trail"
+```
+
+
+```{r}
+save(audioFeatures, file = "audioFeatures.RData")
+```
+
