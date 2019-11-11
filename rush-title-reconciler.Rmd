@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Title reconciliation
 
-This script converts titles in `audioFeatures.RData
+This script converts titles in `audioFeatures.RData` to match titles in `rawLyrics.RData`.
 
 
 ```{r}
